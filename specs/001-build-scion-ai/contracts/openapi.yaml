@@ -1,0 +1,322 @@
+openapi: 3.0.3
+info:
+  title: Scion AI Funding Discovery API
+  version: 0.1.0
+  description: API contracts for opportunities ingestion, search, alerts, analytics, and admin controls.
+servers:
+  - url: https://api.example.com
+    description: Placeholder server
+tags:
+  - name: Opportunities
+  - name: Search
+  - name: Alerts
+  - name: Analytics
+  - name: Admin
+  - name: Auth
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Opportunity:
+      type: object
+      required: [id, title, source, matchScore]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        summary: { type: string }
+        link: { type: string, format: uri }
+        deadline: { type: string, format: date, nullable: true }
+        amountValue: { type: number, nullable: true }
+        amountCurrency: { type: string, nullable: true }
+        amountBucket: { type: string, enum: [small, medium, large, unknown] }
+        source: { type: string }
+        researchAreas: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+        matchScore: { type: integer, minimum: 0, maximum: 100 }
+        matchScoreAt: { type: string, format: date-time, nullable: true }
+        matchExplanation: { type: object }
+    OpportunityFilter:
+      type: object
+      properties:
+        researchArea: { type: string }
+        amountBucket: { type: string, enum: [small, medium, large, unknown] }
+        source: { type: string }
+        deadlineWindow: { type: string, enum: [30d, 3m, 6m] }
+        q: { type: string }
+        page: { type: integer, minimum: 1, default: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 200, default: 25 }
+        sort: { type: string, enum: [matchScore_desc, deadline_asc, recency_desc] }
+    Page:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Opportunity'
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+        nextPage: { type: integer, nullable: true }
+    Alert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [urgentDeadline, newOrUpdated, reminder] }
+        opportunityId: { type: string, format: uuid, nullable: true }
+        dueAt: { type: string, format: date-time }
+        status: { type: string, enum: [pending, sent, snoozed, acknowledged] }
+    Source:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string }
+        url: { type: string }
+        schedule: { type: string }
+        enabled: { type: boolean }
+security:
+  - bearerAuth: []
+paths:
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        '200': { description: OK }
+
+  /search/run:
+    post:
+      tags: [Search]
+      summary: Trigger AI search (crawl → normalize → score)
+      responses:
+        '202': { description: Enqueued }
+
+  /search/status:
+    get:
+      tags: [Search]
+      summary: Get search status and progress
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [IDLE, SEARCHING, ACTIVE] }
+                  lastRun: { type: string, format: date-time, nullable: true }
+                  queueDepth: { type: integer }
+                  progress: { type: number, minimum: 0, maximum: 1 }
+
+  /opportunities:
+    get:
+      tags: [Opportunities]
+      summary: List opportunities with server-side filtering and pagination
+      parameters:
+        - in: query
+          name: researchArea
+          schema: { type: string }
+        - in: query
+          name: amountBucket
+          schema: { type: string, enum: [small, medium, large, unknown] }
+        - in: query
+          name: source
+          schema: { type: string }
+        - in: query
+          name: deadlineWindow
+          schema: { type: string, enum: [30d, 3m, 6m] }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 25, maximum: 200 }
+        - in: query
+          name: sort
+          schema: { type: string, enum: [matchScore_desc, deadline_asc, recency_desc] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page'
+
+  /opportunities/export.csv:
+    get:
+      tags: [Opportunities]
+      summary: CSV export for current filter set
+      responses:
+        '200': { description: CSV stream }
+
+  /opportunities/{id}:
+    get:
+      tags: [Opportunities]
+      summary: Get opportunity detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Opportunity'
+
+  /opportunities/{id}/watch:
+    post:
+      tags: [Opportunities]
+      summary: Watch an opportunity
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Watched }
+
+  /opportunities/{id}/assign:
+    post:
+      tags: [Opportunities]
+      summary: Assign owner/team
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ownerUserId: { type: string, format: uuid }
+                team: { type: string }
+      responses:
+        '204': { description: Assigned }
+
+  /opportunities/{id}/pipeline:
+    post:
+      tags: [Opportunities]
+      summary: Add to pipeline stage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stage: { type: string, enum: [triage, drafting, submitted, won, lost] }
+      responses:
+        '204': { description: Updated }
+
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts for current user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alert'
+
+  /alerts/{id}/ack:
+    post:
+      tags: [Alerts]
+      summary: Acknowledge an alert
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Acknowledged }
+
+  /alerts/{id}/snooze:
+    post:
+      tags: [Alerts]
+      summary: Snooze an alert
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                until: { type: string, format: date-time }
+      responses:
+        '204': { description: Snoozed }
+
+  /admin/sources:
+    get:
+      tags: [Admin]
+      summary: List source connectors
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Source'
+    post:
+      tags: [Admin]
+      summary: Create a source connector
+      responses:
+        '201': { description: Created }
+
+  /admin/sources/{id}:
+    patch:
+      tags: [Admin]
+      summary: Update a source connector (enable/disable, schedule, parser)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Updated }
+
+  /admin/taxonomy/themes:
+    get:
+      tags: [Admin]
+      summary: List institute themes
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Admin]
+      summary: Add a theme
+      responses:
+        '201': { description: Created }
+
+  /analytics/summary:
+    get:
+      tags: [Analytics]
+      summary: Analytics overview
+      responses:
+        '200': { description: OK }
