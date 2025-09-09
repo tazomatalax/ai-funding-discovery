@@ -25,12 +25,23 @@ fi
 
 echo "=== Updating agent context files for feature $CURRENT_BRANCH ==="
 
-# Extract tech from new plan
-NEW_LANG=$(grep "^**Language/Version**: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/^**Language\/Version**: //' | grep -v "NEEDS CLARIFICATION" || echo "")
-NEW_FRAMEWORK=$(grep "^**Primary Dependencies**: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/^**Primary Dependencies**: //' | grep -v "NEEDS CLARIFICATION" || echo "")
-NEW_TESTING=$(grep "^**Testing**: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/^**Testing**: //' | grep -v "NEEDS CLARIFICATION" || echo "")
-NEW_DB=$(grep "^**Storage**: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/^**Storage**: //' | grep -v "N/A" | grep -v "NEEDS CLARIFICATION" || echo "")
-NEW_PROJECT_TYPE=$(grep "^**Project Type**: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/^**Project Type**: //' || echo "")
+# Extract tech from new plan - handle actual format from template
+NEW_LANG=$(grep "\*\*Language/Version\*\*: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/.*\*\*Language\/Version\*\*: //' | sed 's/ *$//' | grep -v "NEEDS CLARIFICATION" || echo "")
+NEW_FRAMEWORK=$(grep "\*\*Primary Dependencies\*\*: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/.*\*\*Primary Dependencies\*\*: //' | sed 's/ *$//' | grep -v "NEEDS CLARIFICATION" || echo "")
+NEW_TESTING=$(grep "\*\*Testing\*\*: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/.*\*\*Testing\*\*: //' | sed 's/ *$//' | grep -v "NEEDS CLARIFICATION" || echo "")
+NEW_DB=$(grep "\*\*Storage\*\*: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/.*\*\*Storage\*\*: //' | sed 's/ *$//' | grep -v "N/A" | grep -v "NEEDS CLARIFICATION" || echo "")
+NEW_PROJECT_TYPE=$(grep "\*\*Project Type\*\*: " "$NEW_PLAN" 2>/dev/null | head -1 | sed 's/.*\*\*Project Type\*\*: //' | sed 's/ *$//' || echo "")
+
+# Extract primary language for commands generation
+PRIMARY_LANG=$(echo "$NEW_LANG" | sed 's/(.*//' | sed 's/,.*//' | sed 's/ *$//')
+
+# Debug output
+echo "Extracted values:"
+echo "  Language: '$NEW_LANG'"
+echo "  Primary: '$PRIMARY_LANG'"
+echo "  Framework: '$NEW_FRAMEWORK'"
+echo "  Storage: '$NEW_DB'"
+echo "  Project Type: '$NEW_PROJECT_TYPE'"
 
 # Function to update a single agent context file
 update_agent_file() {
@@ -54,10 +65,22 @@ update_agent_file() {
             return 1
         fi
         
-        # Replace placeholders
-        sed -i.bak "s/\[PROJECT NAME\]/$(basename $REPO_ROOT)/" "$temp_file"
-        sed -i.bak "s/\[DATE\]/$(date +%Y-%m-%d)/" "$temp_file"
-        sed -i.bak "s/\[EXTRACTED FROM ALL PLAN.MD FILES\]/- $NEW_LANG + $NEW_FRAMEWORK ($CURRENT_BRANCH)/" "$temp_file"
+        # Replace placeholders with better formatting
+        PROJECT_NAME=$(basename "$REPO_ROOT")
+        CURRENT_DATE=$(date +%Y-%m-%d)
+        
+        # Format tech stack entry
+        if [ -n "$NEW_LANG" ] && [ -n "$NEW_FRAMEWORK" ]; then
+            TECH_ENTRY="- $PRIMARY_LANG + $(echo "$NEW_FRAMEWORK" | cut -d';' -f1 | sed 's/Frontend: //g' | sed 's/Backend: //g') ($CURRENT_BRANCH)"
+        elif [ -n "$NEW_LANG" ]; then
+            TECH_ENTRY="- $PRIMARY_LANG ($CURRENT_BRANCH)"
+        else
+            TECH_ENTRY="- Unknown stack ($CURRENT_BRANCH)"
+        fi
+        
+        sed -i.bak "s/\[PROJECT NAME\]/$PROJECT_NAME/" "$temp_file"
+        sed -i.bak "s/\[DATE\]/$CURRENT_DATE/" "$temp_file"
+        sed -i.bak "s|\[EXTRACTED FROM ALL PLAN.MD FILES\]|$TECH_ENTRY|" "$temp_file"
         
         # Add project structure based on type
         if [[ "$NEW_PROJECT_TYPE" == *"web"* ]]; then
@@ -66,23 +89,42 @@ update_agent_file() {
             sed -i.bak "s|\[ACTUAL STRUCTURE FROM PLANS\]|src/\ntests/|" "$temp_file"
         fi
         
-        # Add minimal commands
-        if [[ "$NEW_LANG" == *"Python"* ]]; then
+        # Add commands based on detected tech
+        COMMANDS=""
+        if [[ "$PRIMARY_LANG" == *"Python"* ]]; then
             COMMANDS="cd src && pytest && ruff check ."
-        elif [[ "$NEW_LANG" == *"Rust"* ]]; then
+        elif [[ "$PRIMARY_LANG" == *"Rust"* ]]; then
             COMMANDS="cargo test && cargo clippy"
-        elif [[ "$NEW_LANG" == *"JavaScript"* ]] || [[ "$NEW_LANG" == *"TypeScript"* ]]; then
-            COMMANDS="npm test && npm run lint"
+        elif [[ "$PRIMARY_LANG" == *"JavaScript"* ]] || [[ "$PRIMARY_LANG" == *"TypeScript"* ]]; then
+            if [[ "$NEW_FRAMEWORK" == *"Next.js"* ]]; then
+                COMMANDS="npm run build && npm run test && npm run lint"
+            else
+                COMMANDS="npm test && npm run lint"
+            fi
+        elif [ -n "$PRIMARY_LANG" ]; then
+            COMMANDS="# Add commands for $PRIMARY_LANG"
         else
-            COMMANDS="# Add commands for $NEW_LANG"
+            COMMANDS="# Add commands for detected technologies"
         fi
-        sed -i.bak "s|\[ONLY COMMANDS FOR ACTIVE TECHNOLOGIES\]|$COMMANDS|" "$temp_file"
+        # Use a more robust replacement method for commands that may contain special chars\n        python3 -c \"\nimport sys\nwith open('$temp_file', 'r') as f: content = f.read()\ncontent = content.replace('[ONLY COMMANDS FOR ACTIVE TECHNOLOGIES]', '''$COMMANDS''')\nwith open('$temp_file', 'w') as f: f.write(content)\""
         
         # Add code style
-        sed -i.bak "s|\[LANGUAGE-SPECIFIC, ONLY FOR LANGUAGES IN USE\]|$NEW_LANG: Follow standard conventions|" "$temp_file"
+        if [ -n "$PRIMARY_LANG" ]; then
+            CODE_STYLE="$PRIMARY_LANG: Follow standard conventions"
+        else
+            CODE_STYLE="Follow standard conventions"
+        fi
+        sed -i.bak "s|\[LANGUAGE-SPECIFIC, ONLY FOR LANGUAGES IN USE\]|$CODE_STYLE|" "$temp_file"
         
         # Add recent changes
-        sed -i.bak "s|\[LAST 3 FEATURES AND WHAT THEY ADDED\]|- $CURRENT_BRANCH: Added $NEW_LANG + $NEW_FRAMEWORK|" "$temp_file"
+        if [ -n "$NEW_LANG" ] && [ -n "$NEW_FRAMEWORK" ]; then
+            RECENT_CHANGE="- $CURRENT_BRANCH: Added $PRIMARY_LANG + $(echo "$NEW_FRAMEWORK" | cut -d';' -f1 | sed 's/Frontend: //g' | sed 's/Backend: //g')"
+        elif [ -n "$NEW_LANG" ]; then
+            RECENT_CHANGE="- $CURRENT_BRANCH: Added $PRIMARY_LANG"
+        else
+            RECENT_CHANGE="- $CURRENT_BRANCH: Updated project structure"
+        fi
+        sed -i.bak "s|\[LAST 3 FEATURES AND WHAT THEY ADDED\]|$RECENT_CHANGE|" "$temp_file"
         
         rm "$temp_file.bak"
     else
@@ -96,80 +138,9 @@ update_agent_file() {
             sed -n "${manual_start},${manual_end}p" "$target_file" > /tmp/manual_additions.txt
         fi
         
-        # Parse existing file and create updated version
-        python3 - << EOF
-import re
-import sys
-from datetime import datetime
-
-# Read existing file
-with open("$target_file", 'r') as f:
-    content = f.read()
-
-# Check if new tech already exists
-tech_section = re.search(r'## Active Technologies\n(.*?)\n\n', content, re.DOTALL)
-if tech_section:
-    existing_tech = tech_section.group(1)
-    
-    # Add new tech if not already present
-    new_additions = []
-    if "$NEW_LANG" and "$NEW_LANG" not in existing_tech:
-        new_additions.append(f"- $NEW_LANG + $NEW_FRAMEWORK ($CURRENT_BRANCH)")
-    if "$NEW_DB" and "$NEW_DB" not in existing_tech and "$NEW_DB" != "N/A":
-        new_additions.append(f"- $NEW_DB ($CURRENT_BRANCH)")
-    
-    if new_additions:
-        updated_tech = existing_tech + "\n" + "\n".join(new_additions)
-        content = content.replace(tech_section.group(0), f"## Active Technologies\n{updated_tech}\n\n")
-
-# Update project structure if needed
-if "$NEW_PROJECT_TYPE" == "web" and "frontend/" not in content:
-    struct_section = re.search(r'## Project Structure\n\`\`\`\n(.*?)\n\`\`\`', content, re.DOTALL)
-    if struct_section:
-        updated_struct = struct_section.group(1) + "\nfrontend/src/      # Web UI"
-        content = re.sub(r'(## Project Structure\n\`\`\`\n).*?(\n\`\`\`)', 
-                        f'\\1{updated_struct}\\2', content, flags=re.DOTALL)
-
-# Add new commands if language is new
-if "$NEW_LANG" and f"# {NEW_LANG}" not in content:
-    commands_section = re.search(r'## Commands\n\`\`\`bash\n(.*?)\n\`\`\`', content, re.DOTALL)
-    if not commands_section:
-        commands_section = re.search(r'## Commands\n(.*?)\n\n', content, re.DOTALL)
-    
-    if commands_section:
-        new_commands = commands_section.group(1)
-        if "Python" in "$NEW_LANG":
-            new_commands += "\ncd src && pytest && ruff check ."
-        elif "Rust" in "$NEW_LANG":
-            new_commands += "\ncargo test && cargo clippy"
-        elif "JavaScript" in "$NEW_LANG" or "TypeScript" in "$NEW_LANG":
-            new_commands += "\nnpm test && npm run lint"
-        
-        if "```bash" in content:
-            content = re.sub(r'(## Commands\n\`\`\`bash\n).*?(\n\`\`\`)', 
-                            f'\\1{new_commands}\\2', content, flags=re.DOTALL)
-        else:
-            content = re.sub(r'(## Commands\n).*?(\n\n)', 
-                            f'\\1{new_commands}\\2', content, flags=re.DOTALL)
-
-# Update recent changes (keep only last 3)
-changes_section = re.search(r'## Recent Changes\n(.*?)(\n\n|$)', content, re.DOTALL)
-if changes_section:
-    changes = changes_section.group(1).strip().split('\n')
-    changes.insert(0, f"- $CURRENT_BRANCH: Added $NEW_LANG + $NEW_FRAMEWORK")
-    # Keep only last 3
-    changes = changes[:3]
-    content = re.sub(r'(## Recent Changes\n).*?(\n\n|$)', 
-                    f'\\1{chr(10).join(changes)}\\2', content, flags=re.DOTALL)
-
-# Update date
-content = re.sub(r'Last updated: \d{4}-\d{2}-\d{2}', 
-                f'Last updated: {datetime.now().strftime("%Y-%m-%d")}', content)
-
-# Write to temp file
-with open("$temp_file", 'w') as f:
-    f.write(content)
-EOF
+        # Parse existing file and create updated version using external script
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        python3 "$SCRIPT_DIR/update_agent_python.py" "$target_file" "$temp_file" "$NEW_LANG" "$PRIMARY_LANG" "$NEW_FRAMEWORK" "$NEW_DB" "$CURRENT_BRANCH"
 
         # Restore manual additions if they exist
         if [ -f /tmp/manual_additions.txt ]; then
