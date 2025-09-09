@@ -13,7 +13,7 @@ tests/
 ```
 
 ## Commands
-npm run build [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] npm run test [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECHNOLOGIES] npm run lint
+npm run build && npm run test && npm run lint
 
 ## Code Style
 TypeScript: Follow standard conventions

@@ -106,7 +106,13 @@ update_agent_file() {
         else
             COMMANDS="# Add commands for detected technologies"
         fi
-        # Use a more robust replacement method for commands that may contain special chars\n        python3 -c \"\nimport sys\nwith open('$temp_file', 'r') as f: content = f.read()\ncontent = content.replace('[ONLY COMMANDS FOR ACTIVE TECHNOLOGIES]', '''$COMMANDS''')\nwith open('$temp_file', 'w') as f: f.write(content)\""
+        # Use a more robust replacement method for commands that may contain special chars
+        python3 -c "
+import sys
+with open('$temp_file', 'r') as f: content = f.read()
+content = content.replace('[ONLY COMMANDS FOR ACTIVE TECHNOLOGIES]', '''$COMMANDS''')
+with open('$temp_file', 'w') as f: f.write(content)
+"
         
         # Add code style
         if [ -n "$PRIMARY_LANG" ]; then
